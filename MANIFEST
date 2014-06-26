@@ -3,5 +3,6 @@ Changes
 MANIFEST
 Makefile.PL
 README
+auth_test.pl
 lib/WWW/Spotify.pm
 t/01-test.t
