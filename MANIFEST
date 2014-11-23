@@ -3,6 +3,7 @@ Changes
 MANIFEST
 Makefile.PL
 README
+README.pod
 lib/WWW/Spotify.pm
 t/01-test.t
 t/02-test.t

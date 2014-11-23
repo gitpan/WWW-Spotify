@@ -10,7 +10,7 @@ package WWW::Spotify;
 use Moose;
 
 BEGIN {
-    $WWW::Spotify::VERSION = "0.003";
+    $WWW::Spotify::VERSION = "0.004";
 }
 
 use Data::Dumper;
@@ -347,47 +347,52 @@ sub send_get_request {
     }
     
     # my $url = $self->build_url_base($call_type);
+    my $url;
+    if ($attributes->{method} eq 'query_full_url') {
+	$url = $attributes->{url};
+    } else {
     
-    my $url = $self->uri_scheme();
+	$url = $self->uri_scheme();
     
-    # the ://
-    $url .= "://";
+	# the ://
+	$url .= "://";
     
-    # the domain
-    $url .= $self->uri_hostname();
+	# the domain
+	$url .= $self->uri_hostname();
     
-    my $path = $method_to_uri{$attributes->{method}};
-    if ($path) {
-        
-        warn "raw: $path" if $self->debug();
-        
-        if ($path =~ /search/ && $attributes->{method} eq 'search') {
-            $path =~ s/\{q\}/$attributes->{q}/;
-            $path =~ s/\{type\}/$attributes->{type}/;
-        } elsif ($path =~ m/\{id\}/ && exists $attributes->{params}{id}) {
-            $path =~ s/\{id\}/$attributes->{params}{id}/;   
-        } elsif ($path =~ m/\{ids\}/ && exists $attributes->{params}{ids}) {
-            $path =~ s/\{ids\}/$attributes->{params}{ids}/;
-        }
-        
-        if ($path =~ m/\{country\}/) {
-            $path =~ s/\{country\}/$attributes->{params}{country}/;
-        }
-        
-        if ($path =~ m/\{user_id\}/ && exists $attributes->{params}{user_id}) {
-            $path =~ s/\{user_id\}/$attributes->{params}{user_id}/;   
-        }
-        
-        if ($path =~ m/\{playlist_id\}/ && exists $attributes->{params}{playlist_id}) {
-            $path =~ s/\{playlist_id\}/$attributes->{params}{playlist_id}/;   
-        }
-        
-        
-        warn "modified: $path\n" if $self->debug();
+    
+	my $path = $method_to_uri{$attributes->{method}};
+	if ($path) {
+	    
+	    warn "raw: $path" if $self->debug();
+	    
+	    if ($path =~ /search/ && $attributes->{method} eq 'search') {
+		$path =~ s/\{q\}/$attributes->{q}/;
+		$path =~ s/\{type\}/$attributes->{type}/;
+	    } elsif ($path =~ m/\{id\}/ && exists $attributes->{params}{id}) {
+		$path =~ s/\{id\}/$attributes->{params}{id}/;   
+	    } elsif ($path =~ m/\{ids\}/ && exists $attributes->{params}{ids}) {
+		$path =~ s/\{ids\}/$attributes->{params}{ids}/;
+	    }
+	    
+	    if ($path =~ m/\{country\}/) {
+		$path =~ s/\{country\}/$attributes->{params}{country}/;
+	    }
+	    
+	    if ($path =~ m/\{user_id\}/ && exists $attributes->{params}{user_id}) {
+		$path =~ s/\{user_id\}/$attributes->{params}{user_id}/;   
+	    }
+	    
+	    if ($path =~ m/\{playlist_id\}/ && exists $attributes->{params}{playlist_id}) {
+		$path =~ s/\{playlist_id\}/$attributes->{params}{playlist_id}/;   
+	    }
+	    
+	    
+	    warn "modified: $path\n" if $self->debug();
+	}
+	
+	$url .= $path;
     }
-    
-    $url .= $path;
-    
     # now we need to address the "extra" attributes if any
     if ($uri_params) {
         my $start_with = '?';
@@ -396,26 +401,7 @@ sub send_get_request {
         }
         $url .= $start_with . $uri_params;
     }
-    
-    
-    my $need_auth = 0;
-    if ($need_auth) {
-        #code
-        # ensure we have a semi valid api key stashed away
-        if ($self->_have_valid_api_key() == 0) {
-            return "won't send requests without a valid api key";
-        }
-        # since it is a GET we can ? it
-        $url .= "?";
-    
-        # add the api key since it should always be sent
-        $url .= "api_key=" . $self->api_key();
-    
-        # add the format
-    
-        $url .= "&format=" . $self->result_format();
-    }
-    
+
     warn "$url\n" if $self->debug;
     local $ENV{PERL_LWP_SSL_VERIFY_HOSTNAME} = 0;
     my $mech = WWW::Mechanize->new( autocheck => 0 );
@@ -494,6 +480,8 @@ sub get_oauth_authorize {
     my $mech = WWW::Mechanize->new( autocheck => 0 );
     my $client_and_secret = $self->oauth_client_id() . ':' . $self->oauth_client_secret();
     my $encoded = encode_base64( $client_and_secret );
+    chomp($encoded);
+    $encoded =~ s/\n//g;
     my $url = $self->oauth_authorize_url();
     
     my @parts;
@@ -504,7 +492,7 @@ sub get_oauth_authorize {
     
     my $params = join('&',@parts);
     $url = $url . "?client_id=" . $self->oauth_client_id() . "&$params";
-    print $url , "\n";
+    # print $url , "\n";
     $mech->get($url);
     # print Dumper($mech);
     return $mech->content();
@@ -700,6 +688,21 @@ sub build_url_base {
     return $url;
 }
 
+#- may want to move this at some point
+
+sub query_full_url {
+    my $self = shift;
+    my $url  = shift;
+    my $client_auth_required = shift || 0;
+    return $self->send_get_request(
+	{
+	    method => 'query_full_url',
+	    url    => $url,
+	    client_auth_required => $client_auth_required
+	}
+    );
+}
+
 #-- spotify specific methods
 
 sub album {
@@ -717,12 +720,22 @@ sub albums {
     my $self = shift;
     my $ids = shift;
 
+    if (ref($ids) eq 'ARRAY') {
+        $ids = join_ids($ids);
+    }
+    
+    
     return $self->send_get_request(
         { method => 'albums',
           params => { 'ids' => $ids }
         }
     );
 
+}
+
+sub join_ids {
+    my $array = shift;
+    return join(',',@$array);
 }
 
 sub albums_tracks {
@@ -754,6 +767,10 @@ sub artist {
 sub artists {
     my $self = shift;
     my $artists = shift;
+    
+    if (ref($artists) eq 'ARRAY') {
+        $artists = join_ids($artists);
+    }    
     
     return $self->send_get_request(
         { method => 'artists',
@@ -891,6 +908,10 @@ sub tracks {
     my $self = shift;
     my $tracks = shift;
     
+    if (ref($tracks) eq 'ARRAY') {
+        $tracks = join_ids($tracks);
+    }    
+    
     return $self->send_get_request(
         { method => 'tracks',
           params => { 'ids' => $tracks }
@@ -936,13 +957,15 @@ __END__
 
 =pod
 
+=encoding UTF-8
+
 =head1 NAME
 
 WWW::Spotify - Spotify Web API Wrapper
 
 =head1 VERSION
 
-version 0.003
+version 0.004
 
 =head1 SYNOPSIS
 
@@ -961,7 +984,7 @@ version 0.003
     
     $result = $spotify->albums_tracks( '6akEvsycLGftJxYudPjmqK',
     {
-        limit => 0,
+        limit => 1,
         offset => 1
         
     }
@@ -995,6 +1018,26 @@ version 0.003
     );
     
     $result = $spotify->user( 'glennpmcdonald' );
+    
+    # public play interaction example
+    # NEED TO SET YOUR o_auth client_id and secret for these to work
+    
+    $spotify->browse_featured_playlists( country => 'US' );
+    
+    my $link = $spotify->get('playlists.items[*].href');
+    
+    # $link is an arrayfef of the all the playlist urls
+    
+    foreach my $for_tracks (@{$link}) {
+        # make sure the links look valid
+        next if $for_tracks !~ /spotify\/play/;
+        $spotify->query_full_url($for_tracks,1);
+	my $pl_name = $spotify->get('name');
+	my $tracks  = $spotify->get('tracks.items[*].track.id');
+	foreach my $track (@{$tracks}) {
+            print "$track\n";
+        }
+    }
 
 =head1 DESCRIPTION
 
@@ -1027,9 +1070,18 @@ last action.
 
 JSON::Path is the underlying library that actually parses the JSON.
 
+=head2 query_full_url( $url , [needs o_auth] )
+
+Results from some calls (playlist for example) return full urls that can be in their entirety. This method allows you
+make a call to that url and use all of the o_auth and other features provided.
+
+    $spotify->query_full_url( "https://api.spotify.com/v1/users/spotify/playlists/06U6mm6KPtPIg9D4YGNEnu" , 1 );
+
 =head2 album
 
 equivalent to /v1/albums/{id}
+
+    $spotify->album('0sNOF9WDwhWunNAHPD3Baj');
 
 used album vs alubms since it is a singlar request
 
@@ -1037,13 +1089,31 @@ used album vs alubms since it is a singlar request
 
 equivalent to /v1/albums?ids={ids} 
 
+    $spotify->albums( '41MnTivkwTO3UUJ8DrqEJJ,6JWc4iAiJ9FjyK0B59ABb4,6UXCm6bOO4gFlDQZV5yL37' );
+
+or
+
+    $spotify->albums( [ '41MnTivkwTO3UUJ8DrqEJJ',
+                        '6JWc4iAiJ9FjyK0B59ABb4',
+                        '6UXCm6bOO4gFlDQZV5yL37' ] );
+
 =head2 albums_tracks
 
 equivalent to /v1/albums/{id}/tracks
 
+    $spotify->albums_tracks('6akEvsycLGftJxYudPjmqK',
+    {
+        limit => 1,
+        offset => 1
+        
+    }
+    );
+
 =head2 artist
 
 equivalent to /v1/artists/{id}
+
+    $spotify->artist( '0LcJLqbBmaGUft1e9Mm8HV' );
 
 used artist vs artists since it is a singlar request and avoid collision with "artists" method
 
@@ -1051,33 +1121,62 @@ used artist vs artists since it is a singlar request and avoid collision with "a
 
 equivalent to /v1/artists?ids={ids} 
 
+    my $artists_multiple = '0oSGxfWSnnOXhD2fKuz2Gy,3dBVyJ7JuOMt4GE9607Qin';
+    
+    $spotify->artists( $artists_multiple );
+
 =head2 artist_albums
 
 equivalent to /v1/artists/{id}/albums
+
+    $spotify->artist_albums( '1vCWHaC5f2uS3yhpwWbIA6' ,
+                        { album_type => 'single',
+                          # country => 'US',
+                          limit   => 2,
+                          offset  => 0
+                        }  );
 
 =head2 artist_top_tracks
 
 equivalent to /v1/artists/{id}/top-tracks
 
+    $spotify->artist_top_tracks( '43ZHCT0cAZBISjO8DG9PnE', # artist id
+                                 'SE' # country
+                                            );
+
 =head2 artist_related_artists
 
 equivalent to /v1/artists/{id}/related-artists
+
+    $spotify->artist_related_artists( '43ZHCT0cAZBISjO8DG9PnE' );
 
 =head2 search
 
 equivalent to /v1/search?type=album (etc)
 
+    $spotify->search(
+                        'tania bowra' ,
+                        'artist' ,
+                        { limit => 15 , offset => 0 }
+    );
+
 =head2 track
 
-equivalent to /v1/tracks/{id} 
+equivalent to /v1/tracks/{id}
+
+    $spotify->track( '0eGsygTp906u18L0Oimnem' );
 
 =head2 tracks
 
-equivalent to /v1/tracks?ids={ids} 
+equivalent to /v1/tracks?ids={ids}
+
+    $spotify->tracks( '0eGsygTp906u18L0Oimnem,1lDWb6b6ieDQ2xT7ewTC3G' );
 
 =head2 browse_featured_playlists
 
 equivalent to /v1/browse/featured-playlists
+
+    $spotify->browse_featured_playlists();
 
 requires OAuth
 
@@ -1086,6 +1185,8 @@ requires OAuth
 equivalent to /v1/browse/new-releases
 
 requires OAuth
+
+    $spotify->browse_new_releases
 
 =head2 user
 
